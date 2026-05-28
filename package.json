@@ -1,0 +1,15 @@
+{
+  "name": "devcap",
+  "version": "1.0.0",
+  "description": "DevCap: Modern CAPTCHA Rebranding",
+  "private": true,
+  "workspaces": [
+    "core",
+    "widget",
+    "demo",
+    "standalone"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=demo"
+  }
+}

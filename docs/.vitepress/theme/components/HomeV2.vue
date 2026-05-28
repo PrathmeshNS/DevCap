@@ -1,0 +1,2387 @@
+<script setup>
+import { onMounted, onBeforeUnmount, ref } from "vue";
+import VPNavBarSearch from "vitepress/dist/client/theme-default/components/VPNavBarSearch.vue";
+
+const fromWidget = ref(false);
+const fromWidgetHost = ref("");
+
+function initFromWidgetBanner() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("utm_source") !== "cap_widget") return;
+    if (sessionStorage.getItem("cap-widget-banner-dismissed") === "1") return;
+    const host = (params.get("utm_content") || "").trim();
+    if (host && /^[a-z0-9.\-]+$/i.test(host) && host.length <= 80) {
+      fromWidgetHost.value = host;
+    }
+    fromWidget.value = true;
+    if (typeof window.plausible === "function") {
+      window.plausible("widget_banner_shown", { props: { host: fromWidgetHost.value || "(unknown)" } });
+    }
+  } catch {}
+}
+
+function dismissWidgetBanner() {
+  fromWidget.value = false;
+  try { sessionStorage.setItem("cap-widget-banner-dismissed", "1"); } catch {}
+  if (typeof window.plausible === "function") {
+    window.plausible("widget_banner_dismiss");
+  }
+}
+
+const cleanups = [];
+
+function registerCleanup(fn) {
+  cleanups.push(fn);
+}
+
+async function loadStats() {
+  const root = document.getElementById("homev2-stats");
+  if (!root) return;
+  try {
+    const res = await fetch(
+      "https://data.jsdelivr.com/v1/stats/packages/npm/@cap.js/wasm@0.0.6/files?period=year&by=hits&limit=1&page=1",
+    );
+    const json = await res.json();
+    const hits = json[0]?.hits;
+    if (!hits) return;
+    const dates = Object.entries(hits.dates).sort(([a], [b]) => (a < b ? -1 : 1));
+    const total = hits.total;
+
+    const fmtDate = (s) =>
+      new Date(s + "T00:00:00Z").toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      });
+
+    const chartDates = dates.slice(-183);
+    const values = chartDates.map(([, v]) => v);
+    const peak = values.reduce((a, b) => Math.max(a, b), 0);
+
+    document.getElementById("homev2-stats-from").textContent = fmtDate(chartDates[0][0]);
+    document.getElementById("homev2-stats-to").textContent = fmtDate(chartDates[chartDates.length - 1][0]);
+
+    const svg = document.getElementById("homev2-stats-spark");
+    const W = 600, H = 40, pad = 2;
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const step = innerW / Math.max(1, values.length - 1);
+    const pts = values.map((v, i) => [
+      pad + i * step,
+      pad + innerH - (v / (peak || 1)) * innerH,
+    ]);
+    const linePath = pts.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(" ");
+    const areaPath =
+      `M${pad},${pad + innerH} ` +
+      pts.map(([x, y]) => `L${x},${y}`).join(" ") +
+      ` L${pad + innerW},${pad + innerH} Z`;
+    svg.innerHTML = `<path class="area" d="${areaPath}" /><path class="line" d="${linePath}" />`;
+
+    const wrap = document.getElementById("homev2-stats-total");
+    const ratePerTick = (total / (365 * 24 * 60 * 60 * 1000)) * 20;
+    let displayed = Math.max(0, total - Math.round(ratePerTick * 120));
+    let shown = -1;
+    let cells = [];
+
+    const buildCells = (str) => {
+      wrap.innerHTML = "";
+      cells = [];
+      for (const ch of str) {
+        if (ch >= "0" && ch <= "9") {
+          const col = document.createElement("span");
+          col.className = "od-col";
+          const strip = document.createElement("span");
+          strip.className = "od-strip";
+          strip.innerHTML = "01234567890"
+            .split("")
+            .map((d) => `<span class="od-d">${d}</span>`)
+            .join("");
+          col.appendChild(strip);
+          wrap.appendChild(col);
+          cells.push({ kind: "d", strip, pos: 0 });
+        } else {
+          const sep = document.createElement("span");
+          sep.className = "od-sep";
+          sep.textContent = ch;
+          wrap.appendChild(sep);
+          cells.push({ kind: "s" });
+        }
+      }
+    };
+
+    const setNumber = (n, instant) => {
+      const str = n.toLocaleString("en-US");
+      if (str.length !== cells.length) buildCells(str);
+      for (let i = 0; i < str.length; i++) {
+        const ch = str[i];
+        const cell = cells[i];
+        if (cell.kind !== "d") continue;
+        const d = ch.charCodeAt(0) - 48;
+        if (cell.pos === 10) {
+          cell.strip.style.transition = "none";
+          cell.strip.style.transform = "translateY(0)";
+          cell.strip.offsetHeight;
+          cell.strip.style.transition = "";
+          cell.pos = 0;
+        }
+        if (cell.pos === d) continue;
+        if (instant) {
+          cell.strip.style.transition = "none";
+          cell.strip.style.transform = `translateY(-${d}em)`;
+          cell.strip.offsetHeight;
+          cell.strip.style.transition = "";
+          cell.pos = d;
+        } else if (cell.pos === 9 && d === 0) {
+          cell.strip.style.transform = `translateY(-10em)`;
+          cell.pos = 10;
+        } else {
+          cell.strip.style.transform = `translateY(-${d}em)`;
+          cell.pos = d;
+        }
+      }
+    };
+
+    shown = Math.floor(displayed);
+    setNumber(shown, true);
+
+    const id = setInterval(() => {
+      displayed += ratePerTick;
+      const next = Math.floor(displayed);
+      if (next !== shown) {
+        shown = next;
+        setNumber(shown, false);
+      }
+    }, 20);
+    registerCleanup(() => clearInterval(id));
+  } catch {
+    root.style.display = "none";
+  }
+}
+
+function initCountUp() {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const cells = document.querySelectorAll("#homev2 .closer-cell .cv");
+  if (!cells.length) return;
+  const animate = (cell) => {
+    const match = cell.textContent.match(/^(\d+)/);
+    if (!match) return;
+    const target = parseInt(match[1], 10);
+    const suffix = cell.innerHTML.slice(match[1].length);
+    if (reduced) return;
+    const dur = 900;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const n = Math.round(target * eased);
+      cell.innerHTML = n + suffix;
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    cell.innerHTML = "0" + suffix;
+    requestAnimationFrame(tick);
+  };
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          animate(e.target);
+          io.unobserve(e.target);
+        }
+      });
+    },
+    { threshold: 0.4 },
+  );
+  cells.forEach((c) => io.observe(c));
+  registerCleanup(() => io.disconnect());
+}
+
+function initLiveArchitecture() {
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) return;
+
+  const rate = document.getElementById("homev2-pow-rate");
+  const target = document.getElementById("homev2-pow-target");
+  const hashes = Array.from(document.querySelectorAll("#homev2 .hash-scroller .track span"));
+  const probes = Array.from(document.querySelectorAll("#homev2 .probe-log .pt"));
+  const ids = [];
+
+  if (rate) {
+    ids.push(setInterval(() => {
+      const r = 2.28 + Math.random() * 0.22;
+      rate.textContent = r.toFixed(2) + "M";
+    }, 360));
+  }
+
+  if (target) {
+    const variants = [
+      "0x0000ffff…",
+      "0x0000fffe…",
+      "0x0000fff8…",
+      "0x0000fffd…",
+      "0x00010000…",
+    ];
+    let i = 0;
+    ids.push(setInterval(() => {
+      i = (i + 1) % variants.length;
+      target.textContent = variants[i];
+    }, 5200));
+  }
+
+  const flashMatch = () => {
+    if (!hashes.length) return;
+    const idx = Math.floor(Math.random() * hashes.length);
+    hashes[idx].classList.add("match");
+    setTimeout(() => hashes[idx].classList.remove("match"), 520);
+  };
+
+  if (hashes.length) {
+    ids.push(setInterval(() => {
+      if (Math.random() < 0.7) flashMatch();
+    }, 1400));
+  }
+
+  let probeLoopActive = true;
+  if (probes.length) {
+    const defs = [
+      { base: 4, jitter: 3 },
+      { base: 11, jitter: 4 },
+      { base: 2, jitter: 2 },
+      { check: true },
+    ];
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const run = async () => {
+      while (probeLoopActive) {
+        for (let i = 0; i < probes.length; i++) {
+          if (!probeLoopActive) return;
+          const p = probes[i];
+          const d = defs[i];
+          p.classList.remove("ok");
+          p.classList.add("running");
+          p.textContent = "…";
+          await wait(260 + Math.random() * 140);
+          p.classList.remove("running");
+          if (d.check) {
+            p.textContent = "✓";
+            p.classList.add("ok");
+          } else {
+            const v = Math.max(1, d.base + Math.floor((Math.random() - 0.5) * d.jitter * 2));
+            p.textContent = `${v}ms`;
+          }
+          await wait(140 + Math.random() * 100);
+        }
+        await wait(1600);
+      }
+    };
+    run();
+  }
+
+  registerCleanup(() => {
+    ids.forEach(clearInterval);
+    probeLoopActive = false;
+  });
+}
+
+function track(name, props) {
+  try {
+    if (typeof window === "undefined" || typeof window.plausible !== "function") return;
+    const merged = { ...(props || {}) };
+    for (const attr of document.documentElement.attributes) {
+      if (attr.name.startsWith("data-exp-")) {
+        merged["exp_" + attr.name.slice(9).replaceAll("-", "_")] = attr.value;
+      }
+    }
+    window.plausible(name, Object.keys(merged).length ? { props: merged } : undefined);
+  } catch {}
+}
+
+function initTrustView() {
+  const el = document.querySelector("#homev2 .trust-zone");
+  if (!el || typeof IntersectionObserver === "undefined") return;
+  let fired = false;
+  const io = new IntersectionObserver((entries) => {
+    if (fired) return;
+    if (entries.some((e) => e.isIntersecting)) {
+      fired = true;
+      io.disconnect();
+      track("trust_view");
+    }
+  }, { threshold: 0.6 });
+  io.observe(el);
+  registerCleanup(() => io.disconnect());
+}
+
+function initCtaTracking() {
+  const handlers = [];
+  document.querySelectorAll("#homev2 [data-cta]").forEach((el) => {
+    const handler = () => {
+      track("cta_click", {
+        cta: el.getAttribute("data-cta"),
+        location: el.getAttribute("data-cta-location") || "unknown",
+      });
+    };
+    el.addEventListener("click", handler);
+    handlers.push([el, handler]);
+  });
+  registerCleanup(() => handlers.forEach(([el, h]) => el.removeEventListener("click", h)));
+}
+
+function initCtaBlockView() {
+  const el = document.querySelector("#homev2 .cta-block");
+  if (!el || typeof IntersectionObserver === "undefined") return;
+  let fired = false;
+  const io = new IntersectionObserver((entries) => {
+    if (fired) return;
+    if (entries.some((e) => e.isIntersecting)) {
+      fired = true;
+      io.disconnect();
+      track("cta_block_view");
+    }
+  }, { threshold: 0.4 });
+  io.observe(el);
+  registerCleanup(() => io.disconnect());
+}
+
+async function loadGithubStars() {
+  const els = document.querySelectorAll(".homev2-gh-stars");
+  if (!els.length) return;
+  const write = (v) => els.forEach((el) => { el.textContent = v; });
+  try {
+    const cached = sessionStorage.getItem("cap-gh-stars");
+    if (cached) write(cached);
+    const res = await fetch("https://api.github.com/repos/tiagozip/cap", {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const n = data.stargazers_count;
+    if (typeof n !== "number") return;
+    const formatted = n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
+    write(formatted);
+    sessionStorage.setItem("cap-gh-stars", formatted);
+  } catch {}
+}
+
+onMounted(() => {
+  document.documentElement.classList.add("home-v2-active");
+  initFromWidgetBanner();
+  loadStats();
+  initCountUp();
+  initLiveArchitecture();
+  initCtaTracking();
+  initCtaBlockView();
+  initTrustView();
+  loadGithubStars();
+  track("hero_view");
+});
+
+onBeforeUnmount(() => {
+  document.documentElement.classList.remove("home-v2-active");
+  while (cleanups.length) {
+    try { cleanups.pop()(); } catch {}
+  }
+});
+</script>
+
+<template>
+  <div id="homev2" :class="{ 'has-widget-banner': fromWidget }">
+    <Transition name="widget-banner">
+      <aside v-if="fromWidget" class="widget-banner" role="region" aria-label="From the Cap widget">
+        <div class="wrap widget-banner-wrap">
+          <span class="widget-banner-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12.5l4.2 4.2L19 7" />
+            </svg>
+          </span>
+          <p class="widget-banner-text">
+            <strong>You just verified you're human with Cap<template v-if="fromWidgetHost">&nbsp;on {{ fromWidgetHost }}</template>.</strong>
+            <span class="widget-banner-sub">You can close this tab. Or stick around if you're curious what Cap is.</span>
+          </p>
+          <button class="widget-banner-close" type="button" aria-label="Dismiss" @click="dismissWidgetBanner">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+    </Transition>
+    <header class="top">
+      <div class="wrap wrap-hero">
+        <div class="inner">
+          <div class="left">
+            <a class="brand" href="/" aria-label="Cap home">
+              <img alt="" src="/logo.png" width="20" height="20" />
+              <strong>Cap</strong>
+            </a>
+            <VPNavBarSearch class="homev2-search" />
+          </div>
+          <nav>
+            <a href="/guide/" data-cta="docs" data-cta-location="nav">Docs</a>
+            <a href="#features" data-cta="features" data-cta-location="nav">Features</a>
+            <a
+              class="gh-link"
+              href="https://github.com/tiagozip/cap"
+              aria-label="GitHub"
+              data-cta="github"
+              data-cta-location="nav"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M12 .5C5.73.5.5 5.73.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.87-1.54-3.87-1.54-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.18.91-.25 1.89-.38 2.86-.38.97 0 1.95.13 2.86.38 2.19-1.49 3.15-1.18 3.15-1.18.62 1.58.23 2.75.11 3.04.73.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.35.78 1.05.78 2.11 0 1.52-.01 2.75-.01 3.12 0 .31.21.67.8.56C20.71 21.38 24 17.08 24 12c0-6.27-5.23-11.5-11.5-11.5z"
+                />
+              </svg>
+              <span class="homev2-gh-stars">6.2k</span>
+            </a>
+          </nav>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap hero-wrap">
+        <div class="hero-copy">
+          <h1>
+            Self-hosted CAPTCHA<br />
+            <span class="dim">for the modern web.</span>
+          </h1>
+
+          <p class="lead">
+            No Google. No telemetry. No visual puzzles. <br />Switch from reCAPTCHA in minutes.
+          </p>
+
+          <div class="actions">
+            <a class="btn primary" href="/guide/" data-cta="docs" data-cta-location="hero">Get started in 5 minutes</a>
+            <a class="btn" href="/guide/demo.html" data-cta="demo" data-cta-location="hero">Try the demo <span class="arr">↗</span></a>
+          </div>
+        </div>
+
+        <div class="hero-image" aria-hidden="true">
+          <div class="image-bg"></div>
+          <img class="image-src" src="/logo.png" alt="" />
+        </div>
+      </div>
+
+      <div class="hero-stage">
+        <div class="variant v-dashboard">
+          <div class="dash-wrap">
+            <div class="dash-frame">
+              <img
+                src="/assets/screenshot.png"
+                alt="Cap admin dashboard screenshot"
+                width="2892"
+                height="1556"
+                style="width: 100%; height: auto"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wrap">
+        <div class="trust-zone">
+          <div class="logobar exp-style-text">
+            <span class="logobar-label">Used in production by</span>
+            <span class="logobar-item">Bunny.net</span>
+            <span class="logobar-sep">·</span>
+            <span class="logobar-item">AdGuard</span>
+            <span class="logobar-sep">·</span>
+            <span class="logobar-item">Fraunhofer</span>
+            <span class="logobar-sep">·</span>
+            <span class="logobar-item logobar-more">and&nbsp;more</span>
+          </div>
+          <div class="logoimg exp-style-logos">
+            <span class="logobar-label">Used in production by</span>
+            <span class="logoimg-row">
+              <img class="li li-bunny" src="/logos/bunny.svg" alt="bunny.net" width="112" height="43" loading="lazy" />
+              <img class="li li-adguard" src="/logos/adguard.svg" alt="AdGuard" width="120" height="60" loading="lazy" />
+              <img class="li li-fraunhofer" src="/logos/fraunhofer.svg" alt="Fraunhofer" width="258" height="72" loading="lazy" />
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <section class="block" id="features">
+        <div class="wrap-wide">
+          <div class="head">
+            <span class="eyebrow">Features</span>
+            <h2>250x smaller than hCaptcha.<br />No puzzles, no tracking.</h2>
+          </div>
+          <div class="feat-grid">
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-3z" />
+                </svg>
+              </div>
+              <h3>Privacy-first</h3>
+              <p>
+                Zero telemetry. No third-party network. Your users' data stays between you and them.
+              </p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linejoin="round"
+                >
+                  <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+                </svg>
+              </div>
+              <h3>~20kb, zero dependencies</h3>
+              <p>Loads in milliseconds, not seconds.</p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M8 12l3 3 5-6" />
+                </svg>
+              </div>
+              <h3>No visual puzzles</h3>
+              <p>
+                PoW and instrumentation run silently in the background. No "click the traffic
+                lights."
+              </p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M4 19V5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2z" />
+                  <path d="M14 3v6h6" />
+                </svg>
+              </div>
+              <h3>Apache 2.0</h3>
+              <p>Free forever. Audit it, fork it, own it. No vendor can pull the rug.</p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="3" y="4" width="18" height="12" rx="2" />
+                  <path d="M7 20h10M12 16v4" />
+                </svg>
+              </div>
+              <h3>Standalone mode</h3>
+              <p>
+                Deploy anywhere with one Docker container. Includes analytics and multi-site-key
+                support.
+              </p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M8 6l-4 6 4 6M16 6l4 6-4 6M14 4l-4 16" />
+                </svg>
+              </div>
+              <h3>No user interaction</h3>
+              <p>
+                Hide the widget entirely and solve challenges silently, ideal for APIs and forms. Ready for headless browser detection.
+              </p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  <path d="M9 12l2 2 4-4" />
+                </svg>
+              </div>
+              <h3>GDPR & WCAG 2.2 compliant</h3>
+              <p>Meets strict privacy and accessibility standards.</p>
+            </div>
+            <div class="feat-cell">
+              <div class="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M4 12h16M12 3a14 14 0 010 18M12 3a14 14 0 000 18" />
+                </svg>
+              </div>
+              <h3>Fully customizable</h3>
+              <p>
+                Colors, size, position, icons, all controllable via CSS variables. No iframe
+                lock-in.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block home-ad-block">
+        <div class="wrap-wide">
+          <div class="home-ad-slot">
+            <EthicalAd variant="homemid" position="top" :skip-on-mobile="true" />
+          </div>
+        </div>
+      </section>
+      <HomeStickyAd />
+
+      <section class="block" id="compare">
+        <div class="wrap-wide">
+          <div class="head">
+            <span class="eyebrow">Compared</span>
+            <h2>How it compares.</h2>
+            <p>
+              Cap sits in the same detection tier as the big names, without shipping your users'
+              data to a third party.
+            </p>
+          </div>
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th style="text-align: left">&nbsp;</th>
+                  <th class="cap-col">Cap</th>
+                  <th>reCAPTCHA</th>
+                  <th>Turnstile</th>
+                  <th>hCaptcha</th>
+                  <th>Friendly</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="label">Self-hosted</td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">-</span></td>
+                  <td><span class="no">-</span></td>
+                  <td><span class="no">-</span></td>
+                  <td><span class="no">-</span></td>
+                </tr>
+                <tr>
+                  <td class="label">Open source</td>
+                  <td><span class="yes">Apache 2.0</span></td>
+                  <td><span class="no">No</span></td>
+                  <td><span class="no">No</span></td>
+                  <td><span class="no">No</span></td>
+                  <td><span class="no">No</span></td>
+                </tr>
+                <tr>
+                  <td class="label">No visual puzzles</td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">Frequent</span></td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">Frequent</span></td>
+                  <td><span class="yes">Yes</span></td>
+                </tr>
+                <tr>
+                  <td class="label">No 3rd-party telemetry</td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">Google</span></td>
+                  <td><span class="no">Cloudflare</span></td>
+                  <td><span class="no">hCaptcha</span></td>
+                  <td><span class="no">Limited</span></td>
+                </tr>
+                <tr>
+                  <td class="label">Bundle size</td>
+                  <td><span class="yes">~20 kb</span></td>
+                  <td><span class="no">500 kb+</span></td>
+                  <td><span class="no">110 kb+</span></td>
+                  <td><span class="no">600 kb+</span></td>
+                  <td><span class="no">80 kb+</span></td>
+                </tr>
+                <tr>
+                  <td class="label">Free at scale</td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">Quota</span></td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">Quota</span></td>
+                  <td><span class="no">Paid</span></td>
+                </tr>
+                <tr>
+                  <td class="label">Instrumentation layer</td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="yes">Yes</span></td>
+                  <td><span class="no">No</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="compliance">
+        <div class="wrap">
+          <div class="head">
+            <span class="eyebrow">Compliance</span>
+            <h2>Compliant out of the box.</h2>
+            <p>
+              Self-hosted and privacy-first, so the hard regulatory questions answer themselves.
+              No cookies, no tracking, no data leaving your servers.
+            </p>
+          </div>
+
+          <div class="cmpl">
+            <div class="cmpl-row">
+              <span class="cmpl-label">Privacy &amp; data</span>
+              <div class="cmpl-chips">
+                <span class="cmpl-chip"><img src="/assets/flags/eu.svg" alt="" width="18" height="18" loading="lazy" />GDPR</span>
+                <span class="cmpl-chip"><img src="/assets/flags/us.svg" alt="" width="18" height="18" loading="lazy" />CCPA / CPRA</span>
+                <span class="cmpl-chip"><img src="/assets/flags/us.svg" alt="" width="18" height="18" loading="lazy" />HIPAA</span>
+                <span class="cmpl-chip"><img src="/assets/flags/ca.svg" alt="" width="18" height="18" loading="lazy" />PIPEDA / CPPA</span>
+                <span class="cmpl-chip"><img src="/assets/flags/br.svg" alt="" width="18" height="18" loading="lazy" />LGPD</span>
+                <span class="cmpl-chip"><img src="/assets/flags/in.svg" alt="" width="18" height="18" loading="lazy" />DPDPA</span>
+                <span class="cmpl-chip"><img src="/assets/flags/cn.svg" alt="" width="18" height="18" loading="lazy" />PIPL</span>
+              </div>
+            </div>
+            <div class="cmpl-row">
+              <span class="cmpl-label">Accessibility</span>
+              <div class="cmpl-chips">
+                <span class="cmpl-chip"><span class="cmpl-globe" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#1f6feb"/><g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"><circle cx="16" cy="16" r="10"/><ellipse cx="16" cy="16" rx="4.2" ry="10"/><path d="M6.4 13h19.2M6.4 19h19.2M16 6v20"/></g></svg></span>WCAG 2.2 AA</span>
+                <span class="cmpl-chip"><img src="/assets/flags/eu.svg" alt="" width="18" height="18" loading="lazy" />EAA / EN 301 549</span>
+                <span class="cmpl-chip"><img src="/assets/flags/us.svg" alt="" width="18" height="18" loading="lazy" />Section 508</span>
+              </div>
+            </div>
+            <div class="cmpl-row">
+              <span class="cmpl-label">Intl.</span>
+              <div class="cmpl-chips">
+                <span class="cmpl-chip"><span class="cmpl-globe" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="1" y="1" width="30" height="30" rx="7" fill="#1f6feb"/><g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round"><circle cx="16" cy="16" r="10"/><ellipse cx="16" cy="16" rx="4.2" ry="10"/><path d="M6.4 13h19.2M6.4 19h19.2M16 6v20"/></g></svg></span>i18n &amp; RTL</span>
+              </div>
+            </div>
+          </div>
+
+          <a class="cmpl-link" href="/guide/compliance.html" data-cta="compliance" data-cta-location="home_compliance">See how Cap complies <span class="arr">↗</span></a>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="wrap">
+          <div class="head">
+            <span class="eyebrow">Architecture</span>
+            <h2>Two independent layers.<br />Bypass one, the other still holds.</h2>
+            <p>
+              Every challenge solves proof-of-work and runs browser instrumentation at the same
+              time. Defeating one layer doesn't defeat the other.
+            </p>
+          </div>
+          <div class="how-grid">
+            <div class="how-card">
+              <span class="lbl">Layer 01</span>
+              <h3>PoW and time-locks</h3>
+              <p>
+                The client solves parallel SHA-256 hashes and time-lock challenges tuned against GPU acceleration in WASM.
+              </p>
+              <div class="kv-row">
+                <div>
+                  <span class="kv-k">target</span><span class="kv-v" id="homev2-pow-target">0x0000ffff…</span>
+                </div>
+                <div>
+                  <span class="kv-k">hashes/s</span><span class="kv-v" id="homev2-pow-rate">2.40M</span>
+                </div>
+                <div>
+                  <span class="kv-k">solved</span><span class="kv-v ok" id="homev2-pow-solved">1.82s ✓</span>
+                </div>
+              </div>
+              <div class="viz">
+                <code>sha256</code>
+                <div class="hash-scroller">
+                  <div class="track">
+                    <span>a7f3…b19c</span><span>9d4e…3b7f</span><span>2c1a…e88d</span><span>f06b…44a2</span><span>5e9c…d710</span><span>8b22…cc91</span>
+                    <span>a7f3…b19c</span><span>9d4e…3b7f</span><span>2c1a…e88d</span><span>f06b…44a2</span><span>5e9c…d710</span><span>8b22…cc91</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="how-card">
+              <span class="lbl">Layer 02</span>
+              <h3>JS instrumentation</h3>
+              <p>
+                A freshly-generated JS program runs complex JavaScript, DOM and browser checks.
+              </p>
+              <div class="probe-log">
+                <div class="pl">
+                  <span class="pi">01</span><span class="pn">layout.getComputedStyle</span><span class="pt">4ms</span>
+                </div>
+                <div class="pl">
+                  <span class="pi">02</span><span class="pn">canvas.toDataURL</span><span class="pt">11ms</span>
+                </div>
+                <div class="pl">
+                  <span class="pi">03</span><span class="pn">event.isTrusted</span><span class="pt">2ms</span>
+                </div>
+                <div class="pl">
+                  <span class="pi">04</span><span class="pn">navigator.webdriver</span><span class="pt ok">✓</span>
+                </div>
+              </div>
+              <div class="viz">
+                <code>dom</code>
+                <div class="dom-probe">
+                  <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block">
+        <div class="wrap">
+          <div class="stats" id="homev2-stats" aria-live="polite">
+            <div class="stats-row">
+              <span class="stats-label">CDN hits · 12mo</span>
+              <span class="stats-num odometer" id="homev2-stats-total"></span>
+            </div>
+            <svg
+              class="stats-spark"
+              id="homev2-stats-spark"
+              viewBox="0 0 600 40"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            ></svg>
+            <div class="stats-axis">
+              <span id="homev2-stats-from">—</span>
+              <span id="homev2-stats-to">—</span>
+            </div>
+          </div>
+
+          <div class="closer">
+            <div class="closer-strip">
+              <div class="closer-cell">
+                <span class="ck">size</span>
+                <span class="cv">20<i>kb</i></span>
+                <span class="cd">vs 600 kb+ hCaptcha</span>
+              </div>
+              <div class="closer-cell">
+                <span class="ck">trackers</span>
+                <span class="cv">0</span>
+                <span class="cd">vs reCAPTCHA</span>
+              </div>
+              <div class="closer-cell">
+                <span class="ck">cost</span>
+                <span class="cv">$0<i>/mo</i></span>
+                <span class="cd">vs $1k+ hCaptcha</span>
+              </div>
+              <div class="closer-cell">
+                <span class="ck">setup</span>
+                <span class="cv">15<i>min</i></span>
+                <span class="cd">docker container</span>
+              </div>
+            </div>
+
+            <dl class="faq">
+              <div>
+                <dt>Is it GDPR-friendly?</dt>
+                <dd>
+                  Yes. Cap doesn't phone home, doesn't set cookies, and doesn't fingerprint users.
+                  Your server sees the verification, no one else does.
+                </dd>
+              </div>
+              <div>
+                <dt>Can I migrate from reCAPTCHA / hCaptcha?</dt>
+                <dd>
+                  Yes. Cap's siteverify API is compatible with reCAPTCHA and hCaptcha, but you'll
+                  need to swap your client-side code to use Cap's widget.
+                </dd>
+              </div>
+              <div>
+                <dt>How effective is it against real bots?</dt>
+                <dd>
+                  Cap's instrumentation combined with proof-of-work is very effective at making
+                  abuse extremely difficult to automate at scale.
+                </dd>
+              </div>
+              <div>
+                <dt>What does it cost to self-host?</dt>
+                <dd>
+                  Cap Standalone fits on a $5 VPS for most sites. There are no per-request fees, no
+                  egress to a third party, and no API quotas to hit.
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section class="block cta-block">
+        <div class="wrap">
+          <div class="cta">
+            <span class="eyebrow">Get started</span>
+            <h2>Ditch reCAPTCHA this afternoon.</h2>
+            <p>
+              Drop the widget into your site, point it at a $5 VPS, and stop paying anyone to see
+              your users' traffic.
+            </p>
+            <div class="actions">
+              <a class="btn primary" href="/guide/" data-cta="docs" data-cta-location="cta_block">Get started in 5 minutes</a>
+              <a class="btn" href="/guide/demo.html" data-cta="demo" data-cta-location="cta_block">Try the demo <span class="arr">↗</span></a>
+              <a class="btn" href="https://github.com/tiagozip/cap" data-cta="github" data-cta-location="cta_block">Star on GitHub</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="wrap home-ad-wrap">
+      <EthicalAd variant="docbottom" />
+    </div>
+
+    <footer>
+      <div class="wrap">
+        <div class="inner">
+          <span>© 2026 <a href="https://tiago.zip">tiago.zip</a> · Apache 2.0</span>
+          <span>
+            <a href="/guide/">Docs</a> ·
+            <a href="https://github.com/tiagozip/cap">GitHub</a> ·
+            <a href="/guide/demo.html">Demo</a>
+          </span>
+        </div>
+      </div>
+    </footer>
+  </div>
+</template>
+
+<style>
+.widget-banner {
+  background: color-mix(in oklab, var(--accent) 11%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--accent) 26%, transparent);
+  color: var(--fg);
+  font-family: var(--font);
+}
+#homev2 .wrap.widget-banner-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-block: 11px;
+}
+.widget-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.widget-banner-text {
+  flex: 1;
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--fg-dim);
+  min-width: 0;
+}
+.widget-banner-text strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.widget-banner-sub {
+  margin-left: 6px;
+}
+.widget-banner-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms, color 120ms;
+}
+.widget-banner-close:hover { background: rgba(255, 255, 255, 0.06); color: var(--fg); }
+.widget-banner-enter-active,
+.widget-banner-leave-active { transition: max-height 260ms ease, opacity 180ms ease; overflow: hidden; }
+.widget-banner-enter-from,
+.widget-banner-leave-to { max-height: 0; opacity: 0; }
+.widget-banner-enter-to,
+.widget-banner-leave-from { max-height: 120px; opacity: 1; }
+
+@media (max-width: 720px) {
+  #homev2 .wrap.widget-banner-wrap { gap: 10px; align-items: flex-start; padding-block: 10px; }
+  .widget-banner-icon { margin-top: 2px; }
+  .widget-banner-text { font-size: 13px; }
+  .widget-banner-sub { display: block; margin-left: 0; margin-top: 2px; }
+}
+
+html.home-v2-active {
+  --bg: #11111b;
+  --surface: #181825;
+  --line: #313244;
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --fg: #e8e8e8;
+  --fg-dim: #9399b2;
+  --fg-mute: #7f849c;
+  --accent: #89b4fa;
+  --font: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: "TX 02 Data", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01";
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) #11111b;
+}
+html.home-v2-active body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+  font-feature-settings: "ss01";
+}
+html.home-v2-active .VPNav,
+html.home-v2-active .VPLocalNav,
+html.home-v2-active .VPSidebar,
+html.home-v2-active .VPDocFooter,
+html.home-v2-active .VPFooter {
+  display: none !important;
+}
+html.home-v2-active .VPContent {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+html.home-v2-active .VPContent.is-home {
+  padding: 0 !important;
+}
+html.home-v2-active main.main {
+  padding: 0 !important;
+}
+
+#homev2 * {
+  box-sizing: border-box;
+}
+#homev2 {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.55;
+  font-feature-settings: "ss01";
+}
+#homev2 a {
+  color: var(--fg);
+  text-decoration: none;
+}
+#homev2 ::selection {
+  background: color-mix(in oklab, var(--accent) 45%, transparent);
+  color: #fff;
+}
+#homev2 :focus {
+  outline: none;
+}
+#homev2 a:focus-visible,
+#homev2 button:focus-visible,
+#homev2 summary:focus-visible,
+#homev2 [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+  transition: none;
+}
+#homev2 .btn:focus-visible {
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+#homev2 .wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+#homev2 .wrap.hero-wrap,
+#homev2 .wrap.wrap-hero {
+  max-width: 1040px;
+}
+#homev2 .wrap.hero-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 48px;
+}
+#homev2 .hero-copy {
+  min-width: 0;
+}
+#homev2 .hero-image {
+  position: relative;
+  width: 280px;
+  height: 280px;
+  flex-shrink: 0;
+}
+#homev2 .hero-image .image-bg {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  width: 220px;
+  height: 220px;
+  background-image: -webkit-linear-gradient(-45deg, #38c2fe, #0279db);
+  filter: blur(56px);
+  transform: translate(-50%, -50%);
+  opacity: 0.2;
+}
+#homev2 .hero-image .image-src {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: 260px;
+  max-height: 260px;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 18px 40px rgba(2, 121, 219, 0.3));
+  border-radius: 0 !important;
+}
+@media (max-width: 860px) {
+  #homev2 .wrap.hero-wrap {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  #homev2 .hero-image {
+    display: none;
+  }
+}
+#homev2 .wrap-wide {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+
+#homev2 header.top {
+  padding: 28px 0 0;
+}
+#homev2 header.top .inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+#homev2 header.top .left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+#homev2 header.top .brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+#homev2 header.top .brand img {
+  width: 20px;
+  height: 20px;
+  transform: translateY(4px);
+  border-radius: 0 !important;
+}
+#homev2 header.top .brand strong {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+#homev2 header.top .brand {
+  color: var(--fg);
+}
+#homev2 header.top nav {
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+#homev2 header.top nav a {
+  position: relative;
+  color: var(--fg-dim);
+  transition: color 0.18s ease;
+}
+#homev2 header.top nav a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  height: 1px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#homev2 header.top nav a:hover {
+  color: var(--fg);
+}
+#homev2 header.top nav a:hover::after {
+  transform: scaleX(1);
+}
+#homev2 header.top nav a.gh-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+#homev2 header.top nav a.gh-link svg {
+  transform: translateY(1px);
+  color: var(--fg-dim);
+  transition: color 0.18s ease;
+}
+#homev2 header.top nav a.gh-link:hover svg {
+  color: var(--fg);
+}
+
+#homev2 .homev2-search {
+  display: inline-flex;
+  align-items: center;
+  flex-grow: 0;
+  padding-left: 0 !important;
+}
+#homev2 .homev2-search .DocSearch-Button {
+  margin: 0;
+  background: var(--surface);
+  transition: transform .2s;
+}
+#homev2 .homev2-search .DocSearch-Button:active {
+  transform: scale(.96);
+}
+@media (max-width: 720px) {
+  #homev2 .homev2-search .DocSearch-Button-Placeholder,
+  #homev2 .homev2-search .DocSearch-Button-Keys {
+    display: none;
+  }
+  #homev2 .homev2-search .DocSearch-Button {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+
+#homev2 main {
+  padding: 60px 0 0;
+}
+
+#homev2 h1 {
+  font-size: 38px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-weight: 500;
+  margin: 0 0 24px;
+  text-wrap: balance;
+}
+#homev2 section.block > .wrap > .head h2,
+#homev2 section.block > .wrap-wide > .head h2,
+#homev2 .cta h2 {
+  text-wrap: balance;
+}
+#homev2 h1 .dim {
+  color: var(--fg-dim);
+  font-weight: 400;
+}
+
+#homev2 .lead {
+  font-size: 17px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+  max-width: 60ch;
+  margin: 0;
+}
+#homev2 .lead strong {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+#homev2 .actions {
+  margin-top: 32px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+#homev2 .btn {
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: border-color 0.15s, background 0.15s, transform .2s;
+}
+#homev2 .btn:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.02);
+}
+#homev2 .btn:active {
+  transform: scale(.96);
+}
+#homev2 .btn.primary {
+  background: var(--accent);
+  color: #0a0a0b;
+  border-color: var(--accent);
+  font-weight: 500;
+}
+#homev2 .btn.primary:hover:not(:active) {
+  transform: scale(1.03);
+}
+
+#homev2 .btn .arr {
+  opacity: 0.6;
+  display: inline-block;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.22s ease;
+}
+#homev2 .btn:hover .arr {
+  opacity: 1;
+  transform: translateX(3px);
+}
+
+#homev2 .hero-stage {
+  margin: 64px 0 0;
+  position: relative;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#homev2 .v-dashboard {
+  min-height: 480px;
+}
+#homev2 .v-dashboard .dash-wrap {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+}
+#homev2 .v-dashboard .dash-frame {
+  position: relative;
+  width: 100%;
+  max-width: 1100px;
+  margin-top: 8px;
+  border-radius: 14px 14px 0 0;
+  border: 1px solid var(--line-strong);
+  background: #0e1015;
+  border-bottom: none;
+  height: fit-content;
+}
+#homev2 .v-dashboard .dash-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 60%, var(--bg) 100%);
+  pointer-events: none;
+  margin-left: -1px;
+  width: calc(100% + 2px);
+}
+#homev2 .v-dashboard .dash-frame img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px 14px 0 0 !important;
+}
+
+#homev2 section.block {
+  padding: 80px 0 0;
+}
+#homev2 section.home-ad-block {
+  padding: 56px 0 0;
+}
+#homev2 .home-ad-slot {
+  max-width: 520px;
+  margin: 0 auto;
+  --vp-c-bg-soft: var(--surface);
+  --vp-c-bg-alt: var(--bg);
+  --vp-c-border: var(--line);
+  --vp-c-text-1: var(--fg);
+  --vp-c-text-2: var(--fg-dim);
+  --vp-c-text-3: var(--fg-mute);
+  --vp-c-brand-1: var(--accent);
+  --carbon-bg-primary: var(--surface);
+  --carbon-bg-secondary: var(--bg);
+  --carbon-text-color: var(--fg);
+}
+#homev2 .home-ad-slot .ea-wrap--homemid {
+  width: 100%;
+  margin: 0;
+}
+@media (max-width: 768px) {
+  #homev2 section.home-ad-block {
+    display: none;
+  }
+}
+#homev2 section.block.cta-block {
+  padding: 120px 0 80px;
+  padding-bottom: 0;
+}
+#homev2 .cta {
+  position: relative;
+  text-align: center;
+  padding: 64px 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  overflow: hidden;
+}
+#homev2 .cta .eyebrow {
+  display: block;
+  margin-bottom: 12px;
+  position: relative;
+}
+#homev2 .cta h2 {
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+  margin: 0 0 12px;
+  position: relative;
+}
+#homev2 .cta p {
+  margin: 0 auto 28px;
+  color: var(--fg-dim);
+  font-size: 16px;
+  max-width: 52ch;
+  position: relative;
+}
+#homev2 .cta .actions {
+  justify-content: center;
+  position: relative;
+}
+@media (max-width: 640px) {
+  #homev2 .cta {
+    padding: 48px 20px;
+  }
+  #homev2 .cta h2 {
+    font-size: 24px;
+  }
+}
+#homev2 .eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+#homev2 section.block > .wrap > .head,
+#homev2 section.block > .wrap-wide > .head {
+  display: block;
+  margin-bottom: 36px;
+}
+#homev2 section.block > .wrap > .head .eyebrow,
+#homev2 section.block > .wrap-wide > .head .eyebrow {
+  display: block;
+  margin-bottom: 10px;
+}
+#homev2 section.block > .wrap > .head h2,
+#homev2 section.block > .wrap-wide > .head h2 {
+  font-size: 28px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  margin: 0 0 8px;
+  line-height: 1.2;
+}
+#homev2 section.block > .wrap > .head p,
+#homev2 section.block > .wrap-wide > .head p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 15px;
+  max-width: 54ch;
+}
+
+#homev2 .trust {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-around;
+  gap: 10px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+#homev2 .trust-item {
+  color: var(--fg);
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 13px;
+}
+#homev2 .trust-sep {
+  color: var(--fg-mute);
+}
+
+#homev2 .logobar {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px 13px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+#homev2 .logobar-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  margin-right: 2px;
+}
+#homev2 .logobar-item {
+  color: var(--fg);
+  font-family: var(--font);
+  font-weight: 500;
+  font-size: 13px;
+}
+#homev2 .logobar-sep {
+  color: var(--fg-mute);
+}
+#homev2 .logobar-more {
+  font-family: var(--mono);
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+#homev2 .logoimg {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px 30px;
+}
+#homev2 .logoimg-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 18px 34px;
+}
+#homev2 img.li {
+  width: auto;
+  object-fit: contain;
+  opacity: 0.9;
+  transition: opacity 0.18s ease;
+}
+#homev2 img.li.li-bunny { height: 27px; }
+#homev2 img.li.li-adguard { height: 30px; }
+#homev2 img.li.li-fraunhofer { height: 20px; }
+#homev2 img.li:hover { opacity: 1; }
+
+/* grayscale variant: desaturated (keeps logo detail, unlike a hard invert) */
+:root[data-exp-logo-color="2"] #homev2 img.li {
+  filter: grayscale(1) brightness(2.2);
+  opacity: 0.8;
+}
+:root[data-exp-logo-color="2"] #homev2 img.li:hover { opacity: 1; }
+
+/* text vs logos toggle (default: text) */
+:root[data-exp-trust-style="2"] #homev2 .exp-style-text { display: none; }
+:root:not([data-exp-trust-style="2"]) #homev2 .exp-style-logos { display: none; }
+
+#homev2 .how-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+#homev2 .how-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 260px;
+  position: relative;
+  overflow: hidden;
+}
+#homev2 .how-card .lbl {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--fg-mute);
+  text-transform: uppercase;
+}
+#homev2 .how-card h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+#homev2 .how-card p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 14px;
+  line-height: 1.6;
+}
+#homev2 .how-card .viz {
+  margin-top: auto;
+  border-top: 1px dashed var(--line);
+  padding-top: 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+#homev2 .how-card .viz code {
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+#homev2 .hash-scroller {
+  flex: 1;
+  overflow: hidden;
+  height: 14px;
+  mask: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+#homev2 .hash-scroller .track {
+  display: flex;
+  gap: 14px;
+  white-space: nowrap;
+  animation: homev2-hash-scroll 10s linear infinite;
+  color: var(--fg-mute);
+}
+@keyframes homev2-hash-scroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+#homev2 .dom-probe {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+}
+#homev2 .dom-probe span {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  animation: homev2-probe-pulse 2.4s ease-in-out infinite;
+}
+#homev2 .dom-probe span:nth-child(2) { animation-delay: 0.2s; }
+#homev2 .dom-probe span:nth-child(3) { animation-delay: 0.4s; }
+#homev2 .dom-probe span:nth-child(4) { animation-delay: 0.6s; }
+#homev2 .dom-probe span:nth-child(5) { animation-delay: 0.8s; }
+#homev2 .dom-probe span:nth-child(6) { animation-delay: 1s; }
+#homev2 .dom-probe span:nth-child(7) { animation-delay: 1.2s; }
+@keyframes homev2-probe-pulse {
+  0%, 100% { background: var(--line-strong); }
+  50% { background: var(--accent); }
+}
+#homev2 .kv-row {
+  display: flex;
+  gap: 18px;
+  padding: 10px 0;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+#homev2 .kv-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+#homev2 .kv-k {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+#homev2 .kv-v {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  transition: color 0.25s ease-out;
+}
+#homev2 .kv-v.ok {
+  color: var(--accent);
+}
+#homev2 .probe-log {
+  border-top: 1px dashed var(--line);
+  padding: 6px 0;
+  margin-top: 4px;
+  padding-bottom: 0;
+}
+#homev2 .pl {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 3px 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+#homev2 .pl .pi { color: var(--fg-mute); }
+#homev2 .pl .pn { color: var(--fg-dim); }
+#homev2 .pl .pt { color: var(--fg-mute); font-size: 10.5px; }
+#homev2 .pl .pt.ok { color: var(--accent); }
+#homev2 .pl .pt.running {
+  color: var(--fg-mute);
+  animation: homev2-probe-dots 0.9s ease-in-out infinite;
+}
+@keyframes homev2-probe-dots {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+#homev2 .hash-scroller .track span {
+  transition: color 0.18s ease-out, text-shadow 0.18s ease-out;
+}
+#homev2 .hash-scroller .track span.match {
+  color: var(--accent);
+  text-shadow: 0 0 10px color-mix(in oklab, var(--accent) 55%, transparent);
+}
+
+#homev2 .feat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+#homev2 .feat-cell {
+  background: var(--bg);
+  padding: 24px 22px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 180px;
+  transition: background 0.2s;
+}
+#homev2 .feat-cell:hover {
+  background: var(--surface);
+}
+#homev2 .feat-cell .icon {
+  color: var(--accent);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+#homev2 .feat-cell .icon svg {
+  width: 24px;
+  height: 24px;
+  position: relative;
+}
+#homev2 .feat-cell h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--fg);
+  letter-spacing: -0.005em;
+}
+#homev2 .feat-cell p {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+#homev2 .matrix {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+#homev2 .matrix::-webkit-scrollbar {
+  height: 6px;
+}
+#homev2 .matrix::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+#homev2 .matrix table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+#homev2 .matrix th,
+#homev2 .matrix td {
+  padding: 14px 14px;
+  text-align: center;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+#homev2 .matrix th:last-child,
+#homev2 .matrix td:last-child {
+  border-right: none;
+}
+#homev2 .matrix tr:last-child th,
+#homev2 .matrix tr:last-child td {
+  border-bottom: none;
+}
+#homev2 .matrix th {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  background: var(--surface);
+  font-weight: 500;
+}
+#homev2 .matrix th.cap-col {
+  color: var(--accent);
+}
+#homev2 .matrix td.label {
+  text-align: left;
+  color: var(--fg);
+  background: rgba(255, 255, 255, 0.015);
+  font-weight: 500;
+}
+#homev2 .matrix td .yes {
+  color: var(--accent);
+  font-weight: 500;
+}
+#homev2 .matrix td .no {
+  color: var(--fg-mute);
+}
+#homev2 .matrix tbody tr {
+  transition: background 0.2s ease;
+}
+#homev2 .matrix tbody tr:hover {
+  background: rgba(255, 255, 255, 0.015);
+}
+#homev2 .matrix th.cap-col,
+#homev2 .matrix tbody td:nth-child(2) {
+  background: color-mix(in oklab, var(--accent) 5%, transparent);
+}
+
+#homev2 footer {
+  margin-top: 120px;
+  padding: 40px 0 48px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+#homev2 footer .inner {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+#homev2 footer a {
+  transition: opacity 0.2s;
+}
+#homev2 footer a:hover {
+  color: var(--fg);
+}
+#homev2 footer .inner span:has(a:hover) a:not(:hover) {
+  opacity: 0.6;
+}
+
+#homev2 .stats {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px dashed var(--line);
+}
+#homev2 .stats-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+#homev2 .stats-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+#homev2 .stats-num {
+  font-family: var(--mono);
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+#homev2 .odometer {
+  display: inline-flex;
+  align-items: flex-end;
+  line-height: 1;
+}
+#homev2 .od-col {
+  display: inline-block;
+  overflow: hidden;
+  height: 1em;
+  width: 1ch;
+  text-align: center;
+  position: relative;
+}
+#homev2 .od-strip {
+  display: block;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+#homev2 .od-d {
+  display: block;
+  height: 1em;
+  line-height: 1;
+}
+#homev2 .od-sep {
+  display: inline-block;
+  line-height: 1;
+}
+#homev2 .stats-spark {
+  display: block;
+  width: 100%;
+  height: 84px;
+  margin-top: 12px;
+}
+#homev2 .stats-spark .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.9;
+}
+#homev2 .stats-spark .area {
+  fill: var(--accent);
+  opacity: 0.08;
+}
+#homev2 .stats-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+  gap: 12px;
+}
+
+#homev2 .closer {
+  margin-top: 64px;
+}
+#homev2 .closer-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+}
+#homev2 .closer-cell {
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-right: 1px dashed var(--line);
+}
+#homev2 .closer-cell:last-child {
+  border-right: none;
+}
+#homev2 .closer-cell .ck {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+#homev2 .closer-cell .cv {
+  font-family: var(--mono);
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+#homev2 .closer-cell .cv i {
+  font-style: normal;
+  color: var(--fg-mute);
+  font-size: 16px;
+  margin-left: 2px;
+}
+#homev2 .closer-cell .cd {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-mute);
+  letter-spacing: 0.005em;
+  margin-top: 2px;
+}
+
+#homev2 .faq {
+  margin: 48px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px 40px;
+}
+#homev2 .faq > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#homev2 .faq dt {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--fg);
+  letter-spacing: -0.005em;
+}
+#homev2 .faq dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--fg-dim);
+  line-height: 1.6;
+  max-width: 44ch;
+}
+
+@media (max-width: 860px) {
+  #homev2 .feat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  #homev2 .how-grid {
+    grid-template-columns: 1fr;
+  }
+  #homev2 .closer-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+  #homev2 .closer-cell:nth-child(2) {
+    border-right: none;
+  }
+  #homev2 .closer-cell:nth-child(-n + 2) {
+    border-bottom: 1px dashed var(--line);
+  }
+  #homev2 .faq {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  #homev2 section.block {
+    padding: 64px 0 0;
+  }
+  #homev2 section.block.cta-block {
+    padding: 88px 0 0;
+  }
+  #homev2 .hero-stage {
+    margin-top: 48px;
+    min-height: 0;
+  }
+  #homev2 .v-dashboard {
+    min-height: 0;
+  }
+  #homev2 section.block > .wrap > .head h2,
+  #homev2 section.block > .wrap-wide > .head h2 {
+    font-size: 24px;
+  }
+}
+@media (max-width: 640px) {
+  #homev2 .wrap,
+  #homev2 .wrap-wide {
+    padding: 0 20px;
+  }
+  #homev2 main {
+    padding: 40px 0 0;
+  }
+  #homev2 header.top {
+    padding: 20px 0 0;
+  }
+  #homev2 header.top .left {
+    gap: 14px;
+  }
+  #homev2 header.top nav {
+    gap: 16px;
+  }
+  #homev2 .feat-grid {
+    grid-template-columns: 1fr;
+  }
+  #homev2 h1 {
+    font-size: 28px;
+  }
+  #homev2 .lead {
+    font-size: 15px;
+  }
+  #homev2 .actions {
+    margin-top: 24px;
+  }
+  #homev2 .btn {
+    padding: 9px 14px;
+    font-size: 13.5px;
+  }
+  #homev2 .matrix th,
+  #homev2 .matrix td {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  #homev2 section.block {
+    padding: 48px 0 0;
+  }
+  #homev2 section.block.cta-block {
+    padding: 64px 0 0;
+  }
+  #homev2 .cta {
+    padding: 40px 20px;
+  }
+  #homev2 .cta h2 {
+    font-size: 22px;
+  }
+  #homev2 .cta p {
+    font-size: 14px;
+  }
+  #homev2 .closer {
+    margin-top: 48px;
+  }
+  #homev2 .closer-cell {
+    padding: 18px 16px;
+  }
+  #homev2 .closer-cell .cv {
+    font-size: 22px;
+  }
+  #homev2 .closer-cell .cv i {
+    font-size: 14px;
+  }
+  #homev2 .trust {
+    margin-top: 32px;
+    justify-content: center;
+    gap: 8px 12px;
+    font-size: 12px;
+  }
+  #homev2 .trust-item {
+    font-size: 12px;
+  }
+  #homev2 .trust-sep {
+    display: none;
+  }
+  #homev2 .logobar {
+    margin-top: 32px;
+    gap: 7px 11px;
+  }
+  #homev2 .logoimg {
+    margin-top: 32px;
+    gap: 12px 18px;
+  }
+  #homev2 .logoimg-row { gap: 14px 24px; }
+  #homev2 img.li.li-bunny { height: 23px; }
+  #homev2 img.li.li-adguard { height: 25px; }
+  #homev2 img.li.li-fraunhofer { height: 16px; }
+  #homev2 footer {
+    margin-top: 80px;
+    padding: 32px 0 40px;
+  }
+  #homev2 .how-card {
+    padding: 20px;
+    min-height: 0;
+  }
+  #homev2 section.block > .wrap > .head,
+  #homev2 section.block > .wrap-wide > .head {
+    margin-bottom: 28px;
+  }
+  #homev2 section.block > .wrap > .head h2,
+  #homev2 section.block > .wrap-wide > .head h2 {
+    font-size: 22px;
+  }
+  #homev2 .hero-stage {
+    margin-top: 40px;
+  }
+  #homev2 footer .inner {
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+@media (max-width: 420px) {
+  #homev2 .wrap,
+  #homev2 .wrap-wide {
+    padding: 0 16px;
+  }
+  #homev2 h1 {
+    font-size: 26px;
+  }
+  #homev2 .actions {
+    gap: 6px;
+  }
+  #homev2 .btn {
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+  #homev2 header.top nav {
+    gap: 14px;
+    font-size: 11.5px;
+  }
+  #homev2 .closer-strip {
+    grid-template-columns: 1fr;
+  }
+  #homev2 .closer-cell {
+    border-right: none !important;
+    border-bottom: 1px dashed var(--line);
+  }
+  #homev2 .closer-cell:last-child {
+    border-bottom: none;
+  }
+  #homev2 .closer-cell:nth-child(-n + 2) {
+    border-bottom: 1px dashed var(--line);
+  }
+  #homev2 .kv-row {
+    gap: 12px;
+  }
+}
+
+@keyframes homev2-hero-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes homev2-hero-stage-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#homev2 .hero-copy > h1,
+#homev2 .hero-copy > .lead,
+#homev2 .hero-copy > .actions,
+#homev2 .hero-image,
+#homev2 .hero-stage,
+#homev2 .trust,
+#homev2 .logobar,
+#homev2 .logoimg {
+  opacity: 0;
+  animation: homev2-hero-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+#homev2 .hero-stage {
+  animation-name: homev2-hero-stage-in;
+  animation-duration: 0.9s;
+}
+#homev2 .hero-copy > h1 { animation-delay: 0.05s; }
+#homev2 .hero-copy > .lead { animation-delay: 0.2s; }
+#homev2 .hero-copy > .actions { animation-delay: 0.34s; }
+#homev2 .hero-image { animation-delay: 0.2s; }
+#homev2 .hero-stage { animation-delay: 0.48s; }
+#homev2 .trust,
+#homev2 .logobar,
+#homev2 .logoimg { animation-delay: 0.62s; }
+
+@media (prefers-reduced-motion: reduce) {
+  #homev2 .hero-copy > h1,
+  #homev2 .hero-copy > .lead,
+  #homev2 .hero-copy > .actions,
+  #homev2 .hero-image,
+  #homev2 .hero-stage,
+  #homev2 .trust,
+  #homev2 .logobar,
+  #homev2 .logoimg {
+    opacity: 1;
+    animation: none;
+  }
+  #homev2 .hash-scroller .track,
+  #homev2 .dom-probe span,
+  #homev2 .pl .pt.running {
+    animation: none;
+  }
+}
+
+@font-face {
+  font-family: "TX 02 Data";
+  src: url("/assets/tx-02-data-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/assets/inter.woff2") format("woff2");
+  font-display: swap;
+}
+
+#homev2 .cmpl {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+}
+#homev2 .cmpl-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 2px;
+  border-bottom: 1px dashed var(--line);
+}
+#homev2 .cmpl-row:last-child {
+  border-bottom: none;
+}
+#homev2 .cmpl-label {
+  flex-shrink: 0;
+  width: 120px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-mute);
+}
+#homev2 .cmpl-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#homev2 .cmpl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+#homev2 .cmpl-chip img,
+#homev2 .cmpl-chip .cmpl-globe,
+#homev2 .cmpl-chip .cmpl-globe svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+#homev2 .cmpl-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 28px;
+  font-size: 14px;
+  color: var(--accent);
+  text-decoration: none;
+}
+#homev2 .cmpl-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 720px) {
+  #homev2 .cmpl-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  #homev2 .cmpl-label {
+    width: auto;
+  }
+}
+</style>

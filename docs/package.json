@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "start": "bunx --bun vitepress dev",
+    "dev": "bunx --bun vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "dependencies": {
+    "@cap.js/widget": "^0.1.18",
+    "vitepress": "^1.6.3",
+    "vitepress-plugin-llms": "^1.1.1",
+    "vitepress-plugin-mermaid": "^2.0.17"
+  },
+  "devDependencies": {
+    "vue": "^3.5.13"
+  }
+}

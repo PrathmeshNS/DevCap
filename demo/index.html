@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DevCap Demo</title>
+
+    <style>
+      body {
+        padding: 0px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0px;
+        flex-direction: column;
+        background-color: #09090b;
+        color: #ededed;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      }
+
+      button {
+        margin-top: 20px;
+        font-family: inherit;
+        background-color: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 8px;
+        color: #ffffff;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        padding: 10px 16px;
+        text-align: center;
+        transition: all 0.2s ease;
+        width: fit-content;
+      }
+
+      button:focus {
+        outline: 0;
+      }
+
+      button:hover {
+        background-color: rgba(40, 40, 40);
+        border: 1px solid rgba(100, 100, 120);
+      }
+
+      button:active {
+        transform: scale(0.98);
+      }
+      .source {
+        color: #a1a1aa;
+        font-family: inherit;
+        margin-top: 16px;
+        font-size: 13px;
+        text-decoration: none;
+        transition: color 0.2s;
+      }
+      .source:hover {
+        color: #e4e4e7;
+      }
+    </style>
+  </head>
+  <body>
+    <cap-widget
+      id="cap"
+      onsolve="console.log(`Token: ${event.detail.token}`)"
+      data-cap-api-endpoint="/api/"
+      data-cap-hidden-field-name="test-endpoint"
+    ></cap-widget>
+
+    <cap-widget
+      id="floating"
+      onsolve="console.log(`Token: ${event.detail.token}`)"
+      data-cap-api-endpoint="/api/"
+    ></cap-widget>
+
+    <button data-cap-floating="#floating" data-cap-floating-position="bottom">
+      Trigger floating mode
+    </button>
+
+    <a href="https://github.com/tiagozip/cap/tree/main/demo" target="_blank" class="source">
+      Source code
+    </a>
+  </body>
+
+  <!--
+  <script src="https://cdn.jsdelivr.net/npm/@cap.js/widget"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@cap.js/widget/cap-floating.min.js"></script>
+  -->
+
+  <script src="/cap.js"></script>
+  <script src="/cap-floating.js"></script>
+</html>

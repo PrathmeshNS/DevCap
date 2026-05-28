@@ -1,0 +1,392 @@
+@font-face {
+  font-family: "Inter";
+  src: url("/assets/inter.woff2") format("woff2");
+  font-display: swap;
+}
+
+html:has(.Layout.home-v2-page),
+html:has(.Layout.home-v2-page) body {
+  background: #11111b;
+  color: #e8e8e8;
+}
+
+/**
+ * Customize default theme styling by overriding CSS variables:
+ * https://github.com/vuejs/vitepress/blob/main/src/client/theme-default/styles/vars.css
+ */
+
+/**
+ * Colors
+ *
+ * Each colors have exact same color scale system with 3 levels of solid
+ * colors with different brightness, and 1 soft color.
+ *
+ * - `XXX-1`: The most solid color used mainly for colored text. It must
+ *   satisfy the contrast ratio against when used on top of `XXX-soft`.
+ *
+ * - `XXX-2`: The color used mainly for hover state of the button.
+ *
+ * - `XXX-3`: The color for solid background, such as bg color of the button.
+ *   It must satisfy the contrast ratio with pure white (#ffffff) text on
+ *   top of it.
+ *
+ * - `XXX-soft`: The color used for subtle background such as custom container
+ *   or badges. It must satisfy the contrast ratio when putting `XXX-1` colors
+ *   on top of it.
+ *
+ *   The soft color must be semi transparent alpha channel. This is crucial
+ *   because it allows adding multiple "soft" colors on top of each other
+ *   to create a accent, such as when having inline code block inside
+ *   custom containers.
+ *
+ * - `default`: The color used purely for subtle indication without any
+ *   special meanings attached to it such as bg color for menu hover state.
+ *
+ * - `brand`: Used for primary brand colors, such as link text, button with
+ *   brand theme, etc.
+ *
+ * - `tip`: Used to indicate useful information. The default theme uses the
+ *   brand color for this by default.
+ *
+ * - `warning`: Used to indicate warning to the users. Used in custom
+ *   container, badges, etc.
+ *
+ * - `danger`: Used to show error, or dangerous message to the users. Used
+ *   in custom container, badges, etc.
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-c-default-1: var(--vp-c-gray-1);
+  --vp-c-default-2: var(--vp-c-gray-2);
+  --vp-c-default-3: var(--vp-c-gray-3);
+  --vp-c-default-soft: var(--vp-c-gray-soft);
+
+  --vp-c-brand-1: #89b4fa;
+  --vp-c-brand-2: #74a6f4;
+  --vp-c-brand-3: #5d8ff3;
+  --vp-c-brand-soft: var(--vp-c-indigo-soft);
+
+  --vp-font-family-base: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+  --vp-c-tip-soft: var(--vp-c-brand-soft);
+
+  --vp-c-warning-1: var(--vp-c-yellow-1);
+  --vp-c-warning-2: var(--vp-c-yellow-2);
+  --vp-c-warning-3: var(--vp-c-yellow-3);
+  --vp-c-warning-soft: var(--vp-c-yellow-soft);
+
+  --vp-c-danger-1: var(--vp-c-red-1);
+  --vp-c-danger-2: var(--vp-c-red-2);
+  --vp-c-danger-3: var(--vp-c-red-3);
+  --vp-c-danger-soft: var(--vp-c-red-soft);
+}
+
+/**
+ * Component: Button
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: var(--vp-c-white);
+  --vp-button-brand-bg: var(--vp-c-brand-3);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: var(--vp-c-white);
+  --vp-button-brand-hover-bg: var(--vp-c-brand-2);
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: var(--vp-c-white);
+  --vp-button-brand-active-bg: var(--vp-c-brand-1);
+}
+
+::selection {
+  background-color: #3e63dd;
+  color: rgb(255, 255, 255);
+}
+
+/**
+ * Component: Home
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(280deg, #38c2fe, #0279db);
+  /*
+  --vp-home-hero-name-background: -webkit-linear-gradient(
+    120deg,
+    #bd34fe 30%,
+    #41d1ff
+  );
+*/
+  --vp-home-hero-image-background-image: -webkit-linear-gradient(-45deg, #38c2fe52, #0279db33);
+
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(56px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(68px);
+  }
+}
+
+/**
+ * Component: Custom Block
+ * -------------------------------------------------------------------------- */
+
+:root {
+  --vp-custom-block-tip-border: transparent;
+  --vp-custom-block-tip-text: var(--vp-c-text-1);
+  --vp-custom-block-tip-bg: var(--vp-c-brand-soft);
+  --vp-custom-block-tip-code-bg: var(--vp-c-brand-soft);
+}
+
+/**
+ * Component: Algolia
+ * -------------------------------------------------------------------------- */
+
+.DocSearch {
+  --docsearch-primary-color: var(--vp-c-brand-1) !important;
+}
+
+/**
+ * Custom CSS
+ * -------------------------------------------------------------------------- */
+
+code {
+  white-space: pre-wrap !important;
+}
+
+img {
+  border-radius: 8px;
+}
+
+.vp-doc [class*="language-"] > span.lang {
+  display: none;
+}
+
+:root {
+  --vp-font-family-mono:
+    mono, ui-monospace, "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace !important;
+}
+
+@font-face {
+  font-family: mono;
+  src: url("/mono-normal.woff2");
+}
+
+@font-face {
+  font-family: mono;
+  font-style: italic;
+  src: url("/mono-italic.woff2");
+}
+
+.vp-code-group .tabs label {
+  line-height: 42px;
+}
+
+.vp-code-group .tabs {
+  padding: 0 8px;
+}
+
+.DocSearch-Logo svg * {
+  fill: var(--vp-c-text-2) !important;
+}
+
+.DocSearch-Logo:hover svg * {
+  fill: var(--vp-c-text-1) !important;
+}
+
+.VPHero .heading span.name.clip {
+  display: none;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: order should be respected */
+*,
+*::before,
+*::after {
+  scrollbar-width: thin;
+  scrollbar-color: hsla(255 0 255 / 15%) #1b1b1f;
+}
+
+html,
+body {
+  scrollbar-gutter: stable;
+}
+.ea-wrap {
+  width: 100%;
+}
+
+.ea-wrap .ea-content {
+  width: 100% !important;
+  max-width: 100% !important;
+  box-shadow: none !important;
+  margin: 0 !important;
+
+  border: 1px solid var(--vp-c-border) !important;
+  display: block !important;
+  padding: 12px 14px !important;
+  background: var(--vp-c-bg-soft) !important;
+  border-radius: 8px !important;
+}
+
+.ea-wrap .ea-content > a:first-child,
+.ea-wrap .ea-content > a:first-child > img,
+.ea-wrap .ea-type-image > a:first-child {
+  display: none !important;
+}
+
+.ea-wrap .ea-text {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  border: none !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: auto !important;
+  background: transparent !important;
+  text-align: left !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+  color: var(--vp-c-text-2) !important;
+}
+
+.ea-wrap .ea-text,
+.ea-wrap .ea-text * {
+  text-align: left !important;
+}
+
+.ea-wrap .ea-text a {
+  color: inherit !important;
+}
+
+.ea-wrap strong.ea-headline,
+.ea-wrap [data-ea-publisher].loaded .ea-content a strong.ea-headline {
+  color: var(--vp-c-brand-1) !important;
+  font-weight: 600 !important;
+  padding: 0 !important;
+  margin: 0px !important;
+  background-color: transparent !important;
+  line-height: inherit !important;
+  display: inline !important;
+}
+
+.ea-wrap span.ea-body,
+.ea-wrap .ea-text .ea-body {
+  display: inline !important;
+  color: var(--vp-c-text-1) !important;
+  font-weight: 400 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  line-height: inherit !important;
+}
+
+.ea-wrap strong.ea-cta,
+.ea-wrap .ea-text a strong.ea-cta {
+  all: unset !important;
+  font-weight: 500 !important;
+  font-size: inherit !important;
+  margin: 0 0 0 4px !important;
+  text-align: left !important;
+  cursor: pointer !important;
+  transition: color 0.15s ease;
+
+  color: var(--vp-c-brand-1) !important;
+  text-decoration: underline !important;
+  width: fit-content !important;
+  display: inline-block !important;
+  margin-left: 3px !important;
+  text-underline-offset: 3px !important;
+}
+
+.ea-wrap .ea-content:hover strong.ea-cta,
+.ea-wrap .ea-text a:hover strong.ea-cta {
+  text-decoration: none !important;
+}
+
+.ea-wrap .ea-content .ea-domain,
+.ea-wrap [data-ea-publisher].loaded .ea-domain {
+  display: block !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--vp-c-text-2) !important;
+  text-align: left !important;
+  padding: 0 !important;
+  margin: 2px 0 0 !important;
+  font-size: 11.5px !important;
+
+  &::after {
+    content: " • via EthicalAds";
+    color: var(--vp-c-text-3) !important;
+  }
+}
+
+[data-ea-publisher].loaded .ea-callout {
+  display: none !important;
+}
+
+.ea-wrap .ea-callout {
+  display: block !important;
+  float: none !important;
+  text-align: left !important;
+  color: var(--vp-c-text-3) !important;
+  font-size: 11.5px !important;
+  font-style: normal !important;
+  margin: 2px 0 0 !important;
+  padding: 0 !important;
+  opacity: 0.7;
+}
+
+.ea-wrap .ea-callout a {
+  color: inherit !important;
+}
+
+.ea-wrap--doctop {
+  margin: 0 0 24px;
+  width: 100%;
+}
+
+.ea-wrap--docbottom {
+  margin: 40px 0 12px;
+  width: 100%;
+}
+
+.ea-wrap--landing {
+  margin: 80px 0 0;
+  width: 100%;
+}
+
+.ea-wrap--landing .ea-content {
+  background: rgba(255, 255, 255, 0.02) !important;
+}
+
+* {
+  --carbon-bg-primary: #f6f6f7;
+  --carbon-bg-secondary: #ffffff;
+  --carbon-text-color: #213547;
+}
+
+.dark * {
+  --carbon-bg-primary: #202127;
+  --carbon-bg-secondary: #161618;
+  --carbon-text-color: rgba(255, 255, 255, 0.87);
+}
+
+#carbon-cover .carbon-footer button,
+#carbon-cover .carbon-footer button * {
+  background: var(--carbon-bg-secondary) !important;
+  color: var(--carbon-text-color) !important;
+}
+
+.VPFooter.has-sidebar {
+  display: block!important;
+  border-top: transparent!important;
+  padding-top: 0px!important;
+}
